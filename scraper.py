@@ -137,6 +137,11 @@ def scrape_infopark():
                 logger.info("No more job listings found on Infopark.")
                 break
                 
+            # Check for out-of-bounds page returning "No Jobs." row
+            if len(rows) == 1 and "no jobs" in rows[0].text.lower():
+                logger.info("No more job listings found on Infopark (reached 'No Jobs').")
+                break
+                
             for row in rows:
                 cols = row.find_all('td')
                 if len(cols) < 5:
