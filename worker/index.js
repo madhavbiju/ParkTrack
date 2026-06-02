@@ -10,9 +10,6 @@ export default {
     }
 
     try {
-      console.log("Runtime Env Keys:", Object.keys(env));
-      console.log("TELEGRAM_BOT_TOKEN is present:", !!env.TELEGRAM_BOT_TOKEN);
-
       const update = await request.json();
       if (!update.message || !update.message.text || !update.message.chat) {
         return new Response('OK'); // Ignore non-message updates
@@ -76,7 +73,7 @@ async function handleAdd(chatId, text, env) {
   }
 
   // Insert into Supabase subscriptions table
-  const url = `${env.SUPABASE_URL}/rest/v1/subscriptions`;
+  const url = env.SUPABASE_URL.endsWith('/') ? `${env.SUPABASE_URL}subscriptions` : `${env.SUPABASE_URL}/subscriptions`;
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -117,7 +114,7 @@ async function handleRemove(chatId, text, env) {
 
   // Delete from Supabase subscriptions table
   const query = `chat_id=eq.${chatId}&keyword=eq.${sanitizedKeyword}`;
-  const url = `${env.SUPABASE_URL}/rest/v1/subscriptions?${query}`;
+  const url = env.SUPABASE_URL.endsWith('/') ? `${env.SUPABASE_URL}subscriptions?${query}` : `${env.SUPABASE_URL}/subscriptions?${query}`;
   const response = await fetch(url, {
     method: 'DELETE',
     headers: {
@@ -139,7 +136,7 @@ async function handleRemove(chatId, text, env) {
 async function handleList(chatId, env) {
   // Query Supabase subscriptions table
   const query = `chat_id=eq.${chatId}&select=keyword,sources`;
-  const url = `${env.SUPABASE_URL}/rest/v1/subscriptions?${query}`;
+  const url = env.SUPABASE_URL.endsWith('/') ? `${env.SUPABASE_URL}subscriptions?${query}` : `${env.SUPABASE_URL}/subscriptions?${query}`;
   const response = await fetch(url, {
     method: 'GET',
     headers: {
