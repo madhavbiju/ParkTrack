@@ -19,7 +19,7 @@ export default {
       const text = update.message.text.trim();
 
       // Handle standard Telegram commands
-      if (text.startsWith('/start')) {
+      if (text.startsWith('/start') || text.startsWith('/help')) {
         await handleStart(chatId, env);
       } else if (text.startsWith('/add')) {
         await handleAdd(chatId, text, env);
@@ -32,16 +32,7 @@ export default {
       } else if (text.startsWith('/about')) {
         await handleAbout(chatId, env);
       } else {
-        await sendTelegramMessage(
-          chatId, 
-          "⚠️ Unknown command. Use:\n" +
-          "• `/add <keywords>` — Add subscriptions\n" +
-          "• `/remove <keyword>` — Remove a subscription\n" +
-          "• `/sources <technopark|infopark|both>` — Change job sources\n" +
-          "• `/about` — About this bot\n" +
-          "• `/list` — View your subscriptions", 
-          env
-        );
+        await handleStart(chatId, env);
       }
 
       return new Response('OK');
@@ -54,21 +45,34 @@ export default {
 
 // 1. Welcome and Onboarding Guide Message
 async function handleStart(chatId, env) {
-  const message = `🚀 *Welcome to Park Track!* 🚀\n\n` +
-    `I will notify you in real-time when new job matching your keywords are posted on *Technopark* or *Infopark*.\n\n` +
-    `*Step 1: Add your keywords*\n` +
-    `You can subscribe to keywords (case-insensitive) one by one or as a comma-separated list:\n` +
-    `• \`/add react, next.js, nodejs\`\n` +
-    `• \`/add python\`\n` +
-    `*(Note: You can add up to 6 active keywords)*\n\n` +
-    `*Step 2: Choose your job sources*\n` +
-    `By default, you listen to *both* parks. Change this anytime for all your subscriptions using:\n` +
-    `• \`/sources technopark\` — Only Technopark\n` +
-    `• \`/sources infopark\` — Only Infopark\n` +
+  const message = `👋 *Welcome to Park Track!*\n\n` +
+    `Tired of checking Technopark and Infopark job portals every day? Just tell me what jobs, skills, or technologies you're looking for, and I'll track new openings for you.\n\n` +
+    `📨 *Daily Job Digest*\n` +
+    `Every morning, you'll receive a single summary containing all newly posted jobs that match your keywords.\n\n` +
+    `🔍 *Add Keywords*\n` +
+    `You can add keywords one by one or as a comma-separated list.\n\n` +
+    `*Examples*\n` +
+    `• \`/add react\`\n` +
+    `• \`/add full stack developer\`\n` +
+    `• \`/add laravel, vue.js, mariadb\`\n\n` +
+    `🏢 *Job Sources*\n` +
+    `By default, jobs are tracked from both Technopark and Infopark.\n\n` +
+    `You can change this at any time:\n\n` +
+    `• \`/sources technopark\` — Technopark only\n` +
+    `• \`/sources infopark\` — Infopark only\n` +
     `• \`/sources both\` — Both IT Parks\n\n` +
-    `*Manage subscriptions:*\n` +
-    `• \`/list\` — View active keywords and sources\n` +
-    `• \`/remove <keyword>\` — Remove a subscription`;
+    `📋 *Commands*\n\n` +
+    `➕ */add <keyword>*\n` +
+    `Track a skill, technology, job title, or keyword.\n\n` +
+    `❌ */remove <keyword>*\n` +
+    `Stop tracking a keyword.\n\n` +
+    `📋 */list*\n` +
+    `View your active keywords and selected source.\n\n` +
+    `ℹ️ */help*\n` +
+    `Show this help message.\n\n` +
+    `📖 */about*\n` +
+    `Learn more about Park Track.\n\n` +
+    `🚀 Add a few keywords to get started, and I'll handle the job hunting.`;
   await sendTelegramMessage(chatId, message, env);
 }
 
