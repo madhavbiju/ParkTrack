@@ -27,8 +27,21 @@ export default {
         await handleRemove(chatId, text, env);
       } else if (text.startsWith('/list')) {
         await handleList(chatId, env);
+      } else if (text.startsWith('/sources')) {
+        await handleSources(chatId, text, env);
+      } else if (text.startsWith('/about')) {
+        await handleAbout(chatId, env);
       } else {
-        await sendTelegramMessage(chatId, "⚠️ Unknown command. Use:\n- `/add <keyword>`\n- `/remove <keyword>`\n- `/list`", env);
+        await sendTelegramMessage(
+          chatId, 
+          "⚠️ Unknown command. Use:\n" +
+          "• `/add <keywords>` — Add subscriptions\n" +
+          "• `/remove <keyword>` — Remove a subscription\n" +
+          "• `/sources <technopark|infopark|both>` — Change job sources\n" +
+          "• `/about` — About this bot\n" +
+          "• `/list` — View your subscriptions", 
+          env
+        );
       }
 
       return new Response('OK');
@@ -39,40 +52,118 @@ export default {
   }
 };
 
-// 1. Welcome and Help Message
+// 1. Welcome and Onboarding Guide Message
 async function handleStart(chatId, env) {
   const message = `🚀 *Welcome to Park Track!* 🚀\n\n` +
-    `I can notify you whenever a job matching your keywords is posted on *Technopark* or *Infopark*.\n\n` +
-    `*Available Commands:*\n` +
-    `• \`/add <keyword>\` — Subscribe to a keyword (e.g. \`/add react\`)\n` +
-    `• \`/remove <keyword>\` — Unsubscribe from a keyword (e.g. \`/remove react\`)\n` +
-    `• \`/list\` — View all your active keyword subscriptions\n\n` +
-    `Let's get started! Try adding your first keyword.`;
+    `I will notify you in real-time when new job matching your keywords are posted on *Technopark* or *Infopark*.\n\n` +
+    `*Step 1: Add your keywords*\n` +
+    `You can subscribe to keywords (case-insensitive) one by one or as a comma-separated list:\n` +
+    `• \`/add react, next.js, nodejs\`\n` +
+    `• \`/add python\`\n` +
+    `*(Note: You can add up to 6 active keywords)*\n\n` +
+    `*Step 2: Choose your job sources*\n` +
+    `By default, you listen to *both* parks. Change this anytime for all your subscriptions using:\n` +
+    `• \`/sources technopark\` — Only Technopark\n` +
+    `• \`/sources infopark\` — Only Infopark\n` +
+    `• \`/sources both\` — Both IT Parks\n\n` +
+    `*Manage subscriptions:*\n` +
+    `• \`/list\` — View active keywords and sources\n` +
+    `• \`/remove <keyword>\` — Remove a subscription`;
   await sendTelegramMessage(chatId, message, env);
 }
 
-// 2. Add Subscription
+// 2. Add Subscription (Supports comma-separated inputs, sources inheritance, & hard limit of 6)
 async function handleAdd(chatId, text, env) {
-  const rawKeyword = text.slice(4).trim();
-  if (!rawKeyword) {
-    await sendTelegramMessage(chatId, "❌ Please specify a keyword.\nUsage: \`/add <keyword>\` (e.g. \`/add python\`)", env);
+  const rawInput = text.slice(4).trim();
+  if (!rawInput) {
+    await sendTelegramMessage(chatId, "❌ Please specify at least one keyword.\nUsage: \`/add <keyword1, keyword2, ...>\` (e.g. \`/add react, python\`)", env);
     return;
   }
 
-  // Sanitize keyword: strip special chars, force to lowercase, cap at 30 chars
-  // We allow alphanumerics, spaces, dots, and hyphens (useful for next.js, .net, react.js, etc.)
-  const sanitizedKeyword = rawKeyword
-    .toLowerCase()
-    .replace(/[^a-z0-9\s.-]/g, '')
-    .trim()
-    .substring(0, 30);
+  // Split by comma for multi-keyword support
+  const rawKeywords = rawInput.split(',');
+  let sanitizedKeywords = [];
 
-  if (!sanitizedKeyword) {
-    await sendTelegramMessage(chatId, "❌ Invalid keyword. Only alphanumeric characters, dots, and hyphens are allowed.", env);
+  for (let raw of rawKeywords) {
+    const sanitized = raw
+      .toLowerCase()
+      .replace(/[^a-z0-9\s.-]/g, '')
+      .trim()
+      .substring(0, 30);
+    if (sanitized && !sanitizedKeywords.includes(sanitized)) {
+      sanitizedKeywords.push(sanitized);
+    }
+  }
+
+  if (sanitizedKeywords.length === 0) {
+    await sendTelegramMessage(chatId, "❌ Invalid keywords. Only alphanumeric characters, dots, and hyphens are allowed.", env);
     return;
   }
 
-  // Insert into Supabase subscriptions table
+  // 1. Fetch current subscriptions for this user to check counts and handle duplicates
+  let existingCount = 0;
+  let userSources = ['technopark', 'infopark']; // Default sources fallback
+  const getQuery = `chat_id=eq.${chatId}&select=keyword,sources`;
+  const getUrl = env.SUPABASE_URL.endsWith('/') ? `${env.SUPABASE_URL}subscriptions?${getQuery}` : `${env.SUPABASE_URL}/subscriptions?${getQuery}`;
+  
+  try {
+    const getResponse = await fetch(getUrl, {
+      method: 'GET',
+      headers: {
+        'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`
+      }
+    });
+    if (getResponse.ok) {
+      const existing = await getResponse.json();
+      existingCount = existing.length;
+      
+      // Inherit sources preference if they already have subscriptions
+      if (existingCount > 0) {
+        userSources = existing[0].sources;
+      }
+      
+      // Deduplicate: filter out keywords the user is already subscribed to
+      const existingKeywords = existing.map(item => item.keyword);
+      sanitizedKeywords = sanitizedKeywords.filter(k => !existingKeywords.includes(k));
+      
+      if (sanitizedKeywords.length === 0) {
+        await sendTelegramMessage(chatId, "ℹ️ You are already subscribed to all of these keywords.", env);
+        return;
+      }
+    }
+  } catch (err) {
+    console.error("Error querying existing subscriptions:", err);
+  }
+
+  // 2. Enforce the hard limit of 6 active subscriptions
+  const MAX_LIMIT = 6;
+  if (existingCount + sanitizedKeywords.length > MAX_LIMIT) {
+    const remaining = MAX_LIMIT - existingCount;
+    if (remaining <= 0) {
+      await sendTelegramMessage(
+        chatId, 
+        `❌ You have reached the limit of ${MAX_LIMIT} keyword subscriptions. Please remove some using \`/remove <keyword>\` before adding more.`, 
+        env
+      );
+    } else {
+      await sendTelegramMessage(
+        chatId, 
+        `❌ Adding these keywords would exceed your limit of ${MAX_LIMIT} subscriptions. You currently have ${existingCount} active and can only add ${remaining} more.`, 
+        env
+      );
+    }
+    return;
+  }
+
+  // Build bulk insert payload
+  const payload = sanitizedKeywords.map(keyword => ({
+    chat_id: chatId,
+    keyword: keyword,
+    sources: userSources
+  }));
+
+  // Insert into Supabase subscriptions table using PostgREST bulk insert
   const url = env.SUPABASE_URL.endsWith('/') ? `${env.SUPABASE_URL}subscriptions` : `${env.SUPABASE_URL}/subscriptions`;
   const response = await fetch(url, {
     method: 'POST',
@@ -82,19 +173,22 @@ async function handleAdd(chatId, text, env) {
       'Content-Type': 'application/json',
       'Prefer': 'resolution=merge-duplicates'
     },
-    body: JSON.stringify({
-      chat_id: chatId,
-      keyword: sanitizedKeyword,
-      sources: ['technopark', 'infopark'] // Default to both sources
-    })
+    body: JSON.stringify(payload)
   });
 
   if (response.ok) {
-    await sendTelegramMessage(chatId, `✅ Subscribed to keyword: \`${sanitizedKeyword}\` for both Technopark and Infopark jobs.`, env);
+    const listStr = sanitizedKeywords.map(k => `\`${k}\``).join(', ');
+    await sendTelegramMessage(
+      chatId, 
+      `✅ Subscribed to keyword(s): ${listStr}\n` +
+      `Job Sources: *${userSources.join(', ')}*\n` +
+      `Total subscriptions: *${existingCount + sanitizedKeywords.length}/${MAX_LIMIT}*`, 
+      env
+    );
   } else {
     const errText = await response.text();
     console.error('Supabase Add Error:', errText);
-    await sendTelegramMessage(chatId, "❌ An error occurred while saving your subscription. Please try again later.", env);
+    await sendTelegramMessage(chatId, "❌ An error occurred while saving your subscriptions. Please try again later.", env);
   }
 }
 
@@ -132,7 +226,58 @@ async function handleRemove(chatId, text, env) {
   }
 }
 
-// 4. List Subscriptions
+// 4. Update job sources for all active subscriptions
+async function handleSources(chatId, text, env) {
+  const rawInput = text.slice(8).trim().toLowerCase();
+  
+  let sources;
+  let label;
+  
+  if (rawInput === 'both') {
+    sources = ['technopark', 'infopark'];
+    label = 'both Technopark and Infopark';
+  } else if (rawInput === 'technopark') {
+    sources = ['technopark'];
+    label = 'Technopark only';
+  } else if (rawInput === 'infopark') {
+    sources = ['infopark'];
+    label = 'Infopark only';
+  } else {
+    await sendTelegramMessage(
+      chatId, 
+      "❌ Invalid source parameter. Choose one of the following:\n" +
+      "• `/sources both`\n" +
+      "• `/sources technopark`\n" +
+      "• `/sources infopark`", 
+      env
+    );
+    return;
+  }
+
+  // Update sources for all existing user subscriptions
+  const query = `chat_id=eq.${chatId}`;
+  const url = env.SUPABASE_URL.endsWith('/') ? `${env.SUPABASE_URL}subscriptions?${query}` : `${env.SUPABASE_URL}/subscriptions?${query}`;
+  
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ sources: sources })
+  });
+
+  if (response.ok) {
+    await sendTelegramMessage(chatId, `🎯 Your job sources have been updated to *${label}* for all your active subscriptions!`, env);
+  } else {
+    const errText = await response.text();
+    console.error('Supabase Patch Error:', errText);
+    await sendTelegramMessage(chatId, "❌ An error occurred while updating your sources.", env);
+  }
+}
+
+// 5. List Subscriptions
 async function handleList(chatId, env) {
   // Query Supabase subscriptions table
   const query = `chat_id=eq.${chatId}&select=keyword,sources`;
@@ -154,7 +299,7 @@ async function handleList(chatId, env) {
 
   const subscriptions = await response.json();
   if (subscriptions.length === 0) {
-    await sendTelegramMessage(chatId, "ℹ️ You do not have any active subscriptions. Use \`/add <keyword>\` to subscribe.", env);
+    await sendTelegramMessage(chatId, "ℹ️ You do not have any active subscriptions. Use \`/add <keywords>\` to subscribe.", env);
     return;
   }
 
@@ -183,4 +328,14 @@ async function sendTelegramMessage(chatId, text, env) {
     const errText = await response.text();
     console.error('Telegram Send Error:', errText);
   }
+}
+
+// 6. About Command
+async function handleAbout(chatId, env) {
+  const message = `ℹ️ *About Park Track*\n\n` +
+    `Park Track is a highly-scalable, zero-cost job notification bot designed to monitor Technopark and Infopark job openings in real-time.\n\n` +
+    `👤 *Developer:* Madhav Biju (@madhavbiju)\n` +
+    `📂 *GitHub Repository:* [madhavbiju/ParkTrack](https://github.com/madhavbiju/ParkTrack)\n\n` +
+    `Feel free to check out the code, report issues, or contribute!`;
+  await sendTelegramMessage(chatId, message, env);
 }
