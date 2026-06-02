@@ -309,8 +309,12 @@ async function handleList(chatId, env) {
 
   let message = "📝 *Your Active Subscriptions:*\n";
   subscriptions.forEach(sub => {
-    message += `• \`${sub.keyword}\` (${sub.sources.join(', ')})\n`;
+    message += `• \`${sub.keyword}\`\n`;
   });
+
+  const sources = subscriptions[0].sources || [];
+  message += `\n*Sources:* ${sources.join(', ')}`;
+
   await sendTelegramMessage(chatId, message, env);
 }
 
