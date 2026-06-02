@@ -1,3 +1,6 @@
-name = "park-track-bot"
+name = "park-track"
 main = "index.js"
 compatibility_date = "2024-03-01"
+
+[observability]
+enabled = false
