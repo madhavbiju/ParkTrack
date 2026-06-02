@@ -1,76 +1,68 @@
-# Technopark Job Scraper & Telegram Notifier
+# Park Track
 
-An automated Python tool that monitors the Technopark jobs API for new job postings matching your specific keywords, and alerts you instantly via a Telegram Bot.
+A highly-scalable, zero-cost Telegram Job Notification Bot. It integrates a Python scraper (running on GitHub Actions) with a Cloudflare Worker backend and a Supabase PostgreSQL database. 
 
-## Features
-
-- **Keyword Filtering:** Only get notified about jobs that matter to you. Uses strict word-boundary regex matching to avoid false positives.
-- **Deduplication:** Uses a lightweight local SQLite database (`jobs.db`) to keep track of notified jobs.
-- **GitHub Actions Ready:** Designed to be run on a schedule in the cloud. It commits the deduplication database back to the repo after successful notifications so scheduled runs maintain state.
+This architecture separates user subscription interaction (handled at the edge via Cloudflare Workers) from daily data collection and notification delivery (handled via GitHub Actions).
 
 ---
 
-## 🚀 Setup for Local Development
-
-### 1. Clone & Setup Environment
-
-```bash
-git clone https://github.com/yourusername/technopark-job-scraper.git
-cd technopark-job-scraper
-
-# Create and activate a virtual environment
-python3 -m venv venv
-source venv/bin/activate  # On Windows use: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
+## 🚀 Repository Structure
 ```
-
-### 2. Configuration
-
-Copy the sample environment file:
-
-```bash
-cp .env.example .env
+tpJobSearch/
+├── .github/
+│   └── workflows/
+│       └── scrape.yml        # GHA schedule for daily scraping & dispatch
+├── worker/
+│   └── index.js              # Cloudflare Worker Telegram Webhook subscription handler
+├── requirements.txt          # Python scraper dependencies
+├── schema.sql                # Supabase PostgreSQL tables, indexes, and views
+├── scraper.py                # Pipeline script containing scraper & notifier logic
+├── .env.example              # Template env file for local testing
+├── .gitignore                # Protects local environment credentials
+└── README.md                 # Project description & guide
 ```
-
-Edit the `.env` file with your credentials:
-
-- `TELEGRAM_BOT_TOKEN`: The token you get from [@BotFather](https://t.me/BotFather) on Telegram.
-- `TELEGRAM_CHAT_ID`: Your personal Chat ID (You can get this from bots like [@userinfobot](https://t.me/userinfobot)).
-- `KEYWORDS`: A comma-separated list of keywords to match (e.g., `react,nodejs,full stack`).
-- `MAX_PAGES`: (Optional) The maximum number of pages to check on the API. Set to `999` to check all pages.
-
-### 3. Run the Scraper
-
-```bash
-python run.py
-```
-
-Check your Telegram for new matches!
 
 ---
 
-## ☁️ Running for Free on GitHub Actions
+## 🛠️ Step-by-Step Setup Guide
 
-You can deploy this script to run automatically every day using GitHub Actions.
+### Step 1: Database Setup (Supabase)
+1. Create a free project in the [Supabase Console](https://database.supabase.com/).
+2. Navigate to the **SQL Editor** in the side panel.
+3. Open a new query, copy the entire content of `schema.sql` from this repository, and click **Run**. This will create the `jobs`, `subscriptions`, and `notifications_sent` tables, alongside the optimized indexes and the `pending_notifications` view.
 
-1. **Push your code** to a private or public GitHub Repository. (The `.gitignore` will ensure your `.env` and local logs stay out of git. The workflow force-adds `jobs.db` because it is the scheduled scraper's deduplication state).
-2. Go to your repository **Settings** -> **Secrets and variables** -> **Actions**.
-3. Under the **Secrets** tab, add:
-   - `TELEGRAM_BOT_TOKEN`
-   - `TELEGRAM_CHAT_ID`
-4. Under the **Variables** tab, add:
-   - `KEYWORDS` (e.g. `python, django, react`)
-5. Go to **Settings** -> **Actions** -> **General**, scroll down to **Workflow permissions**, and select **Read and write permissions**. This is _critical_ because the action needs to save the `jobs.db` file back to the repository so you don't get duplicate notifications the next day.
+---
 
-Once configured, the workflow (`.github/workflows/job_scraper.yml`) will automatically run every day at 10:00 AM IST. You can also trigger it manually from the "Actions" tab.
+### Step 2: Deploy user subscriptions (Cloudflare Worker)
+The Cloudflare Worker acts as the 24/7 serverless webhook that listens to users adding and listing keywords.
+1. Deploy the script located in `worker/index.js` to a new Cloudflare Worker (you can use wrangler via `npx wrangler deploy` inside the `worker` folder).
+2. Go to your Cloudflare Worker dashboard, navigate to **Settings** -> **Variables**, and add the following environment variables:
+   - `SUPABASE_URL`: Your Supabase project URL.
+   - `SUPABASE_SERVICE_ROLE_KEY`: Your Supabase service role API key.
+   - `TELEGRAM_BOT_TOKEN`: Your Telegram Bot API token (obtained from [@BotFather](https://t.me/BotFather)).
+3. Hook your bot to your Worker by running the following command in your terminal (replace with your values):
+   ```bash
+   curl -F "url=https://your-worker-subdomain.workers.dev" https://api.telegram.org/bot<YOUR_TELEGRAM_BOT_TOKEN>/setWebhook
+   ```
 
-## Architecture & Code Structure
+Now, try sending `/start`, `/add python`, or `/list` to your Telegram Bot. It should reply instantly!
 
-- `run.py`: The entry point.
-- `src/fetcher.py`: Connects to the API and retrieves job listings using `requests`.
-- `src/filter.py`: Handles strict word-boundary matching to filter jobs based on your keywords.
-- `src/storage.py`: Manages the SQLite deduplication state.
-- `src/notifier.py`: Formats the alert and sends it via the Telegram API.
-- `src/models.py`: Data structures (`Job`, `Company`).
+---
+
+### Step 3: Scraper Automation (GitHub Actions)
+The scraper fetches new jobs daily, bulk upserts them to Supabase, and dispatches messages to users matching their registered keywords.
+1. Push this codebase to your own GitHub Repository.
+2. In your GitHub repository, go to **Settings** -> **Secrets and variables** -> **Actions** -> **Repository Secrets**.
+3. Add the following secrets:
+   - `SUPABASE_URL`: Your Supabase project URL.
+   - `SUPABASE_SERVICE_ROLE_KEY`: Your Supabase service role API key.
+   - `TELEGRAM_BOT_TOKEN`: Your Telegram Bot API token.
+4. The scraper is configured (`.github/workflows/scrape.yml`) to run automatically once a day. You can also trigger it manually by visiting the **Actions** tab in your repository, selecting the **Daily Job Scraper** workflow, and clicking **Run workflow**.
+
+---
+
+## 📝 Available Bot Commands
+- `/start` or `/subscribe` — Explains usage and registers the user.
+- `/add <keyword>` — Subscribes to a keyword (e.g. `/add react`). Input is automatically sanitized (lowercase, alphanumeric, dots, hyphens, capped at 30 chars).
+- `/remove <keyword>` — Unsubscribes from a keyword (e.g. `/remove react`).
+- `/list` — Lists all your active subscriptions.
