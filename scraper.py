@@ -3,7 +3,7 @@ import re
 import time
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -31,6 +31,12 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY or not TELEGRAM_BOT_TOKEN:
     logger.error("Missing critical environment variables: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, or TELEGRAM_BOT_TOKEN.")
     sys.exit(1)
+
+# Clean up SUPABASE_URL if it has /rest/v1 or /rest/v1/ at the end
+if SUPABASE_URL.endswith("/rest/v1"):
+    SUPABASE_URL = SUPABASE_URL[:-8]
+elif SUPABASE_URL.endswith("/rest/v1/"):
+    SUPABASE_URL = SUPABASE_URL[:-9]
 
 # Initialize Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
@@ -89,10 +95,15 @@ def scrape_technopark():
                 
                 # Format url using numeric id
                 job_url = f"https://technopark.in/job-details/{numeric_id}"
+                posted_date = item.get('posted_date')
+                closing_date = item.get('closing_date')
                 
                 jobs.append({
                     "job_id": job_id,
                     "title": title,
+                    "company_name": company_name,
+                    "posted_date": posted_date if posted_date else None,
+                    "expiry_date": closing_date if closing_date else None,
                     "description": f"Company: {company_name}",
                     "url": job_url,
                     "source": "technopark",
@@ -120,7 +131,7 @@ def scrape_infopark():
 
     page = 1
     while True:
-        url = f"https://infopark.in/companies/job-search/{page}"
+        url = f"https://infopark.in/companies/job-search/1?page={page}"
         try:
             logger.info(f"Fetching Infopark page {page}...")
             response = session.get(url, timeout=10)
@@ -163,10 +174,15 @@ def scrape_infopark():
                     continue
                 raw_id = match.group(1)
                 job_id = f"infopark-{raw_id}"
+                posted_date = parse_infopark_date(posted_date_raw)
+                expiry_date = parse_infopark_date(closing_date_raw)
                 
                 jobs.append({
                     "job_id": job_id,
                     "title": title,
+                    "company_name": company_name,
+                    "posted_date": posted_date,
+                    "expiry_date": expiry_date,
                     "description": f"Company: {company_name}",
                     "url": job_url,
                     "source": "infopark",
@@ -234,59 +250,75 @@ def main():
         logger.error(f"Error bulk upserting jobs: {e}")
         # We can still proceed to send notifications for successfully matched ones already in DB
         
-    # 3. Fetch Pending Notifications from view
+    # 3. Fetch Pending Notifications from consolidated view
     pending_list = []
     try:
         logger.info("Querying pending notifications view...")
-        response = supabase.table("pending_notifications").select("*").execute()
+        response = supabase.table("pending_notifications_consolidated").select("*").execute()
         pending_list = response.data
-        logger.info(f"Found {len(pending_list)} pending notifications to deliver.")
+        logger.info(f"Found {len(pending_list)} users with consolidated pending notifications.")
     except Exception as e:
-        logger.error(f"Error querying pending_notifications: {e}")
+        logger.error(f"Error querying pending_notifications_consolidated: {e}")
         return
 
     if not pending_list:
         logger.info("No new matching jobs found to notify. Exiting.")
         return
 
-    # 4. Dispatch Loop with Scale Protection
+    # 4. Dispatch Loop with Scale Protection and Digest Splitter
     successful_notifications = []
     for item in pending_list:
         chat_id = item["chat_id"]
-        job_id = item["job_id"]
-        title = item["title"]
-        description = item["description"]
-        job_url = item["url"]
-        source = item["source"].capitalize()
-        keyword = item["keyword"]
+        job_ids = item["job_ids"]
+        jobs_markdown = item["jobs_markdown"]
 
-        # Format Telegram message using clean markdown
-        # Escape markdown special characters in titles
-        safe_title = title.replace('*', '\\*').replace('_', '\\_').replace('[', '\\[').replace('`', '\\`')
-        safe_description = description.replace('*', '\\*').replace('_', '\\_').replace('[', '\\[').replace('`', '\\`')
+        if not jobs_markdown or not job_ids:
+            continue
+
+        # Split consolidated markdown into parts if it exceeds Telegram's limit (4000 characters)
+        message_parts = []
+        current_part = []
+        current_len = 0
         
-        message = (
-            f"🚀 *New Job Match Found!*\n\n"
-            f"• *Title:* {safe_title}\n"
-            f"• *Source:* {source}\n"
-            f"• {safe_description}\n"
-            f"• *Matched Keyword:* `{keyword}`\n\n"
-            f"[Apply Here]({job_url})"
-        )
+        # Split by double newline to separate individual job blocks
+        blocks = jobs_markdown.split('\n\n')
+        for block in blocks:
+            block_len = len(block)
+            # Add 2 for '\n\n' delimiter when combining
+            if current_part and current_len + block_len + 2 > 4000:
+                message_parts.append('\n\n'.join(current_part))
+                current_part = [block]
+                current_len = block_len
+            else:
+                current_part.append(block)
+                current_len += block_len + (2 if len(current_part) > 1 else 0)
+                
+        if current_part:
+            message_parts.append('\n\n'.join(current_part))
 
+        # Send digest parts
         try:
-            logger.info(f"Notifying chat {chat_id} about {job_id}...")
-            send_telegram_notification(chat_id, message)
-            
-            successful_notifications.append({
-                "chat_id": chat_id,
-                "job_id": job_id
-            })
-            
-            # Rate limit scale protection
-            time.sleep(0.05)
+            total_parts = len(message_parts)
+            for idx, part in enumerate(message_parts, 1):
+                if total_parts > 1:
+                    message_text = f"📦 *Daily Job Digest (Part {idx}/{total_parts})*:\n\n{part}"
+                else:
+                    message_text = f"🚀 *Daily Job Digest*:\n\n{part}"
+
+                logger.info(f"Notifying chat {chat_id} about digest part {idx}/{total_parts}...")
+                send_telegram_notification(chat_id, message_text)
+                
+                # Rate limit protection between successive messages
+                time.sleep(0.05)
+                
+            # If all parts were successfully sent, add all job_ids to notifications_sent list
+            for jid in job_ids:
+                successful_notifications.append({
+                    "chat_id": chat_id,
+                    "job_id": jid
+                })
         except Exception as e:
-            logger.error(f"Failed to notify chat {chat_id} about {job_id}: {e}")
+            logger.error(f"Failed to deliver digest to chat {chat_id}: {e}")
 
     # 5. Post-Delivery Log: Batch log sent messages
     if successful_notifications:
@@ -296,6 +328,16 @@ def main():
             logger.info("Sent notifications successfully logged.")
         except Exception as e:
             logger.error(f"Error logging sent notifications: {e}")
+            
+    # 6. Database Maintenance: Clean up jobs older than 90 days
+    try:
+        logger.info("Cleaning up jobs older than 90 days...")
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+        supabase.table("jobs").delete().lt("scraped_at", cutoff).execute()
+        # Deleting old jobs will automatically cascade delete from notifications_sent
+        logger.info("Database cleanup completed successfully.")
+    except Exception as e:
+        logger.error(f"Error cleaning up old jobs: {e}")
             
     logger.info("Scraper Pipeline completed successfully.")
 
