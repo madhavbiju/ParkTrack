@@ -10,6 +10,9 @@ export default {
     }
 
     try {
+      console.log("Runtime Env Keys:", Object.keys(env));
+      console.log("TELEGRAM_BOT_TOKEN is present:", !!env.TELEGRAM_BOT_TOKEN);
+
       const update = await request.json();
       if (!update.message || !update.message.text || !update.message.chat) {
         return new Response('OK'); // Ignore non-message updates
