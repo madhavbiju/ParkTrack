@@ -12,10 +12,12 @@ tpJobSearch/
 ├── .github/
 │   └── workflows/
 │       └── scrape.yml        # GHA schedule for daily scraping & dispatch
+├── supabase/
+│   └── migrations/
+│       └── 20260602000000_init_schema.sql  # Database migrations folder
 ├── worker/
 │   └── index.js              # Cloudflare Worker Telegram Webhook subscription handler
 ├── requirements.txt          # Python scraper dependencies
-├── schema.sql                # Supabase PostgreSQL tables, indexes, and views
 ├── scraper.py                # Pipeline script containing scraper & notifier logic
 ├── .env.example              # Template env file for local testing
 ├── .gitignore                # Protects local environment credentials
@@ -27,9 +29,10 @@ tpJobSearch/
 ## 🛠️ Step-by-Step Setup Guide
 
 ### Step 1: Database Setup (Supabase)
+To make your schema automatically deploy upon Git integration with Supabase, we follow the Supabase CLI standard migrations path:
 1. Create a free project in the [Supabase Console](https://database.supabase.com/).
-2. Navigate to the **SQL Editor** in the side panel.
-3. Open a new query, copy the entire content of `schema.sql` from this repository, and click **Run**. This will create the `jobs`, `subscriptions`, and `notifications_sent` tables, alongside the optimized indexes and the `pending_notifications` view.
+2. When connecting your GitHub repository to Supabase, it will detect the `supabase/migrations` directory and automatically apply your schemas!
+3. Alternatively, you can copy the contents of `supabase/migrations/20260602000000_init_schema.sql` and run it manually in the **SQL Editor** under your Supabase project dashboard.
 
 ---
 
