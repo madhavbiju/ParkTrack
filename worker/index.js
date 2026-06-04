@@ -9,13 +9,24 @@ export default {
       return new Response('Only POST requests allowed', { status: 405 });
     }
 
+    // Verify webhook secret token if configured
+    if (env.TELEGRAM_WEBHOOK_SECRET) {
+      const secretHeader = request.headers.get('X-Telegram-Bot-Api-Secret-Token');
+      if (secretHeader !== env.TELEGRAM_WEBHOOK_SECRET) {
+        return new Response('Unauthorized', { status: 403 });
+      }
+    }
+
     try {
       const update = await request.json();
       if (!update.message || !update.message.text || !update.message.chat) {
         return new Response('OK'); // Ignore non-message updates
       }
 
-      const chatId = update.message.chat.id;
+      const chatId = Number(update.message.chat.id);
+      if (isNaN(chatId) || !Number.isInteger(chatId)) {
+        return new Response('Invalid Chat ID', { status: 400 });
+      }
       const text = update.message.text.trim();
 
       // Handle standard Telegram commands
@@ -31,6 +42,8 @@ export default {
         await handleSources(chatId, text, env);
       } else if (text.startsWith('/about')) {
         await handleAbout(chatId, env);
+      } else if (text.startsWith('/donate')) {
+        await handleDonate(chatId, env);
       } else {
         await handleStart(chatId, env);
       }
@@ -48,7 +61,7 @@ async function handleStart(chatId, env) {
   const message = `👋 *Welcome to Park Track!*\n\n` +
     `Tired of checking Technopark and Infopark job portals every day? Just tell me what jobs, skills, or technologies you're looking for, and I'll track new openings for you.\n\n` +
     `📨 *Daily Job Digest*\n` +
-    `Every morning, you'll receive a single summary containing all newly posted jobs that match your keywords.\n\n` +
+    `Every day, you'll receive a single summary containing all newly posted jobs that match your keywords.\n\n` +
     `🔍 *Add Keywords*\n` +
     `You can add keywords one by one or as a comma-separated list.\n\n` +
     `*Examples*\n` +
@@ -72,6 +85,8 @@ async function handleStart(chatId, env) {
     `Show this help message.\n\n` +
     `📖 */about*\n` +
     `Learn more about Park Track.\n\n` +
+    `❤️ */donate*\n` +
+    `Support the project development.\n\n` +
     `🚀 Add a few keywords to get started, and I'll handle the job hunting.`;
   await sendTelegramMessage(chatId, message, env);
 }
@@ -91,7 +106,7 @@ async function handleAdd(chatId, text, env) {
   for (let raw of rawKeywords) {
     const sanitized = raw
       .toLowerCase()
-      .replace(/[^a-z0-9\s.-]/g, '')
+      .replace(/[^a-z0-9\s._\/\+#&-]/g, '')
       .trim()
       .substring(0, 30);
     if (sanitized && !sanitizedKeywords.includes(sanitized)) {
@@ -100,7 +115,7 @@ async function handleAdd(chatId, text, env) {
   }
 
   if (sanitizedKeywords.length === 0) {
-    await sendTelegramMessage(chatId, "❌ Invalid keywords. Only alphanumeric characters, dots, and hyphens are allowed.", env);
+    await sendTelegramMessage(chatId, "❌ Invalid keywords. Only alphanumeric characters, spaces, dots, hyphens, underscores, slashes, plus signs, hashes, and ampersands are allowed.", env);
     return;
   }
 
@@ -108,15 +123,12 @@ async function handleAdd(chatId, text, env) {
   let existingCount = 0;
   let userSources = ['technopark', 'infopark']; // Default sources fallback
   const getQuery = `chat_id=eq.${chatId}&select=keyword,sources`;
-  const getUrl = env.SUPABASE_URL.endsWith('/') ? `${env.SUPABASE_URL}subscriptions?${getQuery}` : `${env.SUPABASE_URL}/subscriptions?${getQuery}`;
+  const getUrl = getSupabaseUrl(env, 'subscriptions', getQuery);
   
   try {
     const getResponse = await fetch(getUrl, {
       method: 'GET',
-      headers: {
-        'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`
-      }
+      headers: getSupabaseHeaders(env)
     });
     if (getResponse.ok) {
       const existing = await getResponse.json();
@@ -168,15 +180,13 @@ async function handleAdd(chatId, text, env) {
   }));
 
   // Insert into Supabase subscriptions table using PostgREST bulk insert
-  const url = env.SUPABASE_URL.endsWith('/') ? `${env.SUPABASE_URL}subscriptions` : `${env.SUPABASE_URL}/subscriptions`;
+  const url = getSupabaseUrl(env, 'subscriptions');
   const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
-      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+    headers: getSupabaseHeaders(env, {
       'Content-Type': 'application/json',
       'Prefer': 'resolution=merge-duplicates'
-    },
+    }),
     body: JSON.stringify(payload)
   });
 
@@ -206,19 +216,16 @@ async function handleRemove(chatId, text, env) {
 
   const sanitizedKeyword = rawKeyword
     .toLowerCase()
-    .replace(/[^a-z0-9\s.-]/g, '')
+    .replace(/[^a-z0-9\s._\/\+#&-]/g, '')
     .trim()
     .substring(0, 30);
 
   // Delete from Supabase subscriptions table
   const query = `chat_id=eq.${chatId}&keyword=eq.${sanitizedKeyword}`;
-  const url = env.SUPABASE_URL.endsWith('/') ? `${env.SUPABASE_URL}subscriptions?${query}` : `${env.SUPABASE_URL}/subscriptions?${query}`;
+  const url = getSupabaseUrl(env, 'subscriptions', query);
   const response = await fetch(url, {
     method: 'DELETE',
-    headers: {
-      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
-      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`
-    }
+    headers: getSupabaseHeaders(env)
   });
 
   if (response.ok) {
@@ -260,15 +267,11 @@ async function handleSources(chatId, text, env) {
 
   // Update sources for all existing user subscriptions
   const query = `chat_id=eq.${chatId}`;
-  const url = env.SUPABASE_URL.endsWith('/') ? `${env.SUPABASE_URL}subscriptions?${query}` : `${env.SUPABASE_URL}/subscriptions?${query}`;
+  const url = getSupabaseUrl(env, 'subscriptions', query);
   
   const response = await fetch(url, {
     method: 'PATCH',
-    headers: {
-      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
-      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-      'Content-Type': 'application/json'
-    },
+    headers: getSupabaseHeaders(env, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({ sources: sources })
   });
 
@@ -285,13 +288,10 @@ async function handleSources(chatId, text, env) {
 async function handleList(chatId, env) {
   // Query Supabase subscriptions table
   const query = `chat_id=eq.${chatId}&select=keyword,sources`;
-  const url = env.SUPABASE_URL.endsWith('/') ? `${env.SUPABASE_URL}subscriptions?${query}` : `${env.SUPABASE_URL}/subscriptions?${query}`;
+  const url = getSupabaseUrl(env, 'subscriptions', query);
   const response = await fetch(url, {
     method: 'GET',
-    headers: {
-      'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
-      'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`
-    }
+    headers: getSupabaseHeaders(env)
   });
 
   if (!response.ok) {
@@ -318,7 +318,49 @@ async function handleList(chatId, env) {
   await sendTelegramMessage(chatId, message, env);
 }
 
-// Telegram Helper function
+// 6. About Command
+async function handleAbout(chatId, env) {
+  const message = `ℹ️ *About Park Track*\n\n` +
+    `Park Track is a highly-scalable, zero-cost job notification bot designed to monitor Technopark and Infopark job openings in real-time.\n\n` +
+    `👤 *Developer:* Madhav Biju (@madhavbiju)\n` +
+    `📂 *GitHub Repository:* [madhavbiju/ParkTrack](https://github.com/madhavbiju/ParkTrack)\n\n` +
+    `Feel free to check out the code, report issues, or contribute!`;
+  await sendTelegramMessage(chatId, message, env);
+}
+
+// 7. Donate Command
+async function handleDonate(chatId, env) {
+  const message = `❤️ *Support Park Track*\n\n` +
+    `Park Track is a free, open-source project. If it has helped you save time in your job search, please consider supporting the project development!\n\n` +
+    `💸 *UPI ID:* \`madhavbiju0399@nyes\`\n\n` +
+    `Thank you for your support!`;
+  await sendTelegramMessage(chatId, message, env);
+}
+
+// --- HELPER FUNCTIONS ---
+
+/**
+ * Builds the fully qualified Supabase REST URL, handling trailing slashes dynamically.
+ */
+function getSupabaseUrl(env, path, query = '') {
+  const baseUrl = env.SUPABASE_URL.endsWith('/') ? env.SUPABASE_URL : `${env.SUPABASE_URL}/`;
+  return query ? `${baseUrl}${path}?${query}` : `${baseUrl}${path}`;
+}
+
+/**
+ * Generates PostgREST headers containing Supabase authorization credentials.
+ */
+function getSupabaseHeaders(env, extraHeaders = {}) {
+  return {
+    'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+    ...extraHeaders
+  };
+}
+
+/**
+ * Helper to dispatch text messages to a Telegram chat.
+ */
 async function sendTelegramMessage(chatId, text, env) {
   const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`;
   const response = await fetch(url, {
@@ -336,14 +378,4 @@ async function sendTelegramMessage(chatId, text, env) {
     const errText = await response.text();
     console.error('Telegram Send Error:', errText);
   }
-}
-
-// 6. About Command
-async function handleAbout(chatId, env) {
-  const message = `ℹ️ *About Park Track*\n\n` +
-    `Park Track is a highly-scalable, zero-cost job notification bot designed to monitor Technopark and Infopark job openings in real-time.\n\n` +
-    `👤 *Developer:* Madhav Biju (@madhavbiju)\n` +
-    `📂 *GitHub Repository:* [madhavbiju/ParkTrack](https://github.com/madhavbiju/ParkTrack)\n\n` +
-    `Feel free to check out the code, report issues, or contribute!`;
-  await sendTelegramMessage(chatId, message, env);
 }
