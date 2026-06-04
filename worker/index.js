@@ -321,7 +321,7 @@ async function handleList(chatId, env) {
 // 6. About Command
 async function handleAbout(chatId, env) {
   const message = `ℹ️ *About Park Track*\n\n` +
-    `Park Track is a highly-scalable, zero-cost job notification bot designed to monitor Technopark and Infopark job openings in real-time.\n\n` +
+    `Park Track monitors job listings from Kerala's largest IT parks (Technopark & Infopark) and delivers a clean daily digest directly to your Telegram.\n\n` +
     `👤 *Developer:* Madhav Biju (@madhavbiju)\n` +
     `📂 *GitHub Repository:* [madhavbiju/ParkTrack](https://github.com/madhavbiju/ParkTrack)\n\n` +
     `Feel free to check out the code, report issues, or contribute!`;
