@@ -1,81 +1,150 @@
-# Park Track
+# Park Track 🚀
 
-A highly-scalable, zero-cost Telegram Job Notification Bot. It integrates a Python scraper (running on GitHub Actions) with a Cloudflare Worker backend and a Supabase PostgreSQL database.
+Never miss a job opening from Technopark or Infopark again.
 
-This architecture separates user subscription interaction (handled at the edge via Cloudflare Workers) from daily data collection and notification delivery (handled via GitHub Actions).
+Park Track is a Telegram bot that monitors job listings from Kerala's biggest IT parks and sends you a clean daily digest of openings that match your interests. Instead of manually checking multiple job portals every day, you simply subscribe to keywords like `Laravel`, `React`, `AI`, `Python`, or `Full Stack`, and Park Track does the tracking for you.
 
----
-
-## 🚀 Repository Structure
-
-```
-tpJobSearch/
-├── .github/
-│   └── workflows/
-│       └── scrape.yml        # GHA schedule for daily scraping & dispatch
-├── supabase/
-│   └── migrations/
-│       └── 20260602000000_init_schema.sql  # Database migrations folder
-├── worker/
-│   └── index.js              # Cloudflare Worker Telegram Webhook subscription handler
-├── requirements.txt          # Python scraper dependencies
-├── scraper.py                # Pipeline script containing scraper & notifier logic
-├── .env.example              # Template env file for local testing
-├── .gitignore                # Protects local environment credentials
-└── README.md                 # Project description & guide
-```
+Whether you're actively job hunting or just keeping an eye on the market, Park Track helps you stay updated without the noise.
 
 ---
 
-## 🛠️ Step-by-Step Setup Guide
+## ✨ What Makes Park Track Different?
 
-### Step 1: Database Setup (Supabase)
+### 🎯 Smart Keyword Matching
+Park Track doesn't rely on simple substring matching. It uses word-boundary-aware POSIX regular expressions to avoid false positives.
+For example:
+* `AI` won't match words like "email" or "unpaid"
+* `.NET` only matches actual .NET roles
+* Special developer terms like `C++`, `C#`, `UI/UX`, and `R&D` are handled correctly
 
-To make your schema automatically deploy upon Git integration with Supabase, we follow the Supabase CLI standard migrations path:
+### 📬 One Clean Daily Digest
+Instead of flooding your Telegram with dozens of individual alerts throughout the day, Park Track combines all matching jobs into a single organized summary message.
 
-1. Create a free project in the [Supabase Console](https://database.supabase.com/).
-2. When connecting your GitHub repository to Supabase, it will detect the `supabase/migrations` directory and automatically apply your schemas!
-3. Alternatively, you can copy the contents of `supabase/migrations/20260602000000_init_schema.sql` and run it manually in the **SQL Editor** under your Supabase project dashboard.
+### 🏢 Choose Your Sources
+Filter by your preferred location:
+* Technopark only
+* Infopark only
+* Both IT parks
+You can switch anytime with a simple Telegram command.
+
+### ⚡ Reliable Delivery
+Built-in safeguards automatically handle Telegram's global rate limits and large message limits (auto-chunking messages that exceed 4,000 characters), ensuring your digests reach you reliably.
+
+### 🔒 Secure by Design
+Telegram webhook requests are validated using secret-token verification (`X-Telegram-Bot-Api-Secret-Token`) to prevent unauthorized spoofing requests.
 
 ---
 
-### Step 2: Deploy user subscriptions (Cloudflare Worker)
+## 🛠️ Built With
 
-The Cloudflare Worker acts as the 24/7 serverless webhook that listens to users adding and listing keywords.
+* **Cloudflare Workers** – Telegram bot backend (Edge)
+* **Supabase (PostgreSQL)** – Data storage and matching engine
+* **GitHub Actions** – Automated daily scraping and notification delivery
+* **Python** – Scraping and notification services
+* **Telegram Bot API** – User interaction and alerts
 
-1. Deploy the script located in `worker/index.js` to a new Cloudflare Worker (you can use wrangler via `npx wrangler deploy` inside the `worker` folder).
-2. Go to your Cloudflare Worker dashboard, navigate to **Settings** -> **Variables**, and add the following environment variables:
-   - `SUPABASE_URL`: Your Supabase project URL.
-   - `SUPABASE_SERVICE_ROLE_KEY`: Your Supabase service role API key.
-   - `TELEGRAM_BOT_TOKEN`: Your Telegram Bot API token (obtained from [@BotFather](https://t.me/BotFather)).
-3. Hook your bot to your Worker by running the following command in your terminal (replace with your values):
+---
+
+## 📁 Project Structure
+
+* **[.github/workflows/scrape.yml](.github/workflows/scrape.yml)** – GitHub Actions schedule workflow
+* **[supabase/migrations/](supabase/migrations/)** – Schema migrations for tables, indexes, and views
+* **[worker/index.js](worker/index.js)** – Cloudflare Worker subscription handler
+* **[worker/wrangler.toml](worker/wrangler.toml)** – Cloudflare Worker project settings
+* **[scraper.py](scraper.py)** – Ingestion pipeline script
+* **[notifier.py](notifier.py)** – Notification delivery service
+* **[utils.py](utils.py)** – Shared database client and configuration helpers
+* **[requirements.txt](requirements.txt)** – Python package dependencies
+* **[.env.example](.env.example)** – Template environment file
+
+---
+
+## 🚀 Getting Started
+
+### 1. Set Up Supabase
+1. Create a Supabase project.
+2. Run the SQL migrations found in the **[supabase/migrations/](supabase/migrations/)** folder sequentially using the Supabase Dashboard **SQL Editor**.
+
+### 2. Deploy the Telegram Backend
+1. Deploy the Cloudflare Worker inside the `worker/` directory:
    ```bash
-   curl -F "url=https://your-worker-subdomain.workers.dev" https://api.telegram.org/bot<YOUR_TELEGRAM_BOT_TOKEN>/setWebhook
+   npx wrangler deploy
+   ```
+2. In your Cloudflare Worker Dashboard under **Settings -> Variables & Secrets**, add the required environment secrets:
+   * `SUPABASE_URL`
+   * `SUPABASE_SERVICE_ROLE_KEY`
+   * `TELEGRAM_BOT_TOKEN`
+   * `TELEGRAM_WEBHOOK_SECRET` (A secure random key to identify webhook traffic)
+3. Register your Telegram webhook with Telegram:
+   ```bash
+   curl -F "url=https://<your-worker-name>.<your-subdomain>.workers.dev" \
+        -F "secret_token=<your_webhook_secret>" \
+        https://api.telegram.org/bot<YOUR_TELEGRAM_BOT_TOKEN>/setWebhook
    ```
 
-Now, try sending `/start`, `/add python`, or `/list` to your Telegram Bot. It should reply instantly!
+### 3. Configure GitHub Actions
+1. Push this repository to GitHub.
+2. In your repository settings, go to **Settings -> Secrets and variables -> Actions**, and add the following repository secrets:
+   * `SUPABASE_URL`
+   * `SUPABASE_SERVICE_ROLE_KEY`
+   * `TELEGRAM_BOT_TOKEN`
+
+The workflow runs automatically every day at 10:00 AM IST and can also be triggered manually from your GitHub Actions tab.
 
 ---
 
-### Step 3: Scraper Automation (GitHub Actions)
+## 🤖 Available Commands
 
-The scraper fetches new jobs daily, bulk upserts them to Supabase, and dispatches messages to users matching their registered keywords.
+### Subscribe to Keywords
+```text
+/add react, next.js, laravel
+```
+Subscribe to one or more keywords (comma-separated). Maximum of 6 active keywords per user.
 
-1. Push this codebase to your own GitHub Repository.
-2. In your GitHub repository, go to **Settings** -> **Secrets and variables** -> **Actions** -> **Repository Secrets**.
-3. Add the following secrets:
-   - `SUPABASE_URL`: Your Supabase project URL.
-   - `SUPABASE_SERVICE_ROLE_KEY`: Your Supabase service role API key.
-   - `TELEGRAM_BOT_TOKEN`: Your Telegram Bot API token.
-4. The scraper is configured (`.github/workflows/scrape.yml`) to run automatically once a day. You can also trigger it manually by visiting the **Actions** tab in your repository, selecting the **Daily Job Scraper** workflow, and clicking **Run workflow**.
+### Remove a Keyword
+```text
+/remove react
+```
+Unsubscribe from a keyword.
+
+### Select Job Sources
+```text
+/sources technopark
+/sources infopark
+/sources both
+```
+Filter which IT park openings to monitor.
+
+### View Active Subscriptions
+```text
+/list
+```
+Displays your active keyword list and selected sources.
+
+### Help
+```text
+/start
+/help
+```
+Displays instructions and command references.
+
+### Learn More
+```text
+/about
+```
+
+### Support the Project
+```text
+/donate
+```
+UPI ID: `madhavbiju0399@nyes`
 
 ---
 
-## 📝 Available Bot Commands
+## 💡 Why I Built This
 
-- `/start` or `/subscribe` — Explains usage and registers the user.
-- `/add <keyword1, keyword2, ...>` — Subscribes to one or multiple comma-separated keywords (e.g. `/add react, next.js, nodejs`). Inputs are automatically sanitized. (Maximum of 6 active keywords per user).
-- `/remove <keyword>` — Unsubscribes from a keyword (e.g. `/remove react`).
-- `/sources <technopark|infopark|both>` — Updates your active job source selection (e.g. `/sources technopark` to only receive Technopark alerts).
-- `/about` — Displays information about the bot.
-- `/list` — Lists all your active keyword subscriptions along with their sources.
+Like many developers in Kerala, I found myself repeatedly checking Technopark and Infopark job portals for relevant openings. Most listings weren't relevant to my skills, and important opportunities were easy to miss.
+
+Park Track was created to automate that process and deliver only the jobs that matter, directly to Telegram.
+
+If it saves you even a few minutes every day—or helps you discover your next opportunity—it's doing its job.
