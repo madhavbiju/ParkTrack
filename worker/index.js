@@ -225,16 +225,29 @@ async function handleRemove(chatId, text, env) {
   const url = getSupabaseUrl(env, 'subscriptions', query);
   const response = await fetch(url, {
     method: 'DELETE',
-    headers: getSupabaseHeaders(env)
+    headers: getSupabaseHeaders(env, {
+      'Prefer': 'return=representation'
+    })
   });
 
-  if (response.ok) {
-    await sendTelegramMessage(chatId, `🗑️ Unsubscribed from keyword: \`${sanitizedKeyword}\`.`, env);
-  } else {
+  if (!response.ok) {
     const errText = await response.text();
     console.error('Supabase Delete Error:', errText);
     await sendTelegramMessage(chatId, "❌ An error occurred while removing your subscription.", env);
+    return;
   }
+
+  const deletedRows = await response.json();
+  if (deletedRows.length === 0) {
+    await sendTelegramMessage(
+      chatId,
+      `ℹ️ You are not subscribed to \`${sanitizedKeyword}\`.`,
+      env
+    );
+    return;
+  }
+
+  await sendTelegramMessage(chatId, `🗑️ Unsubscribed from keyword: \`${sanitizedKeyword}\`.`, env);
 }
 
 // 4. Update job sources for all active subscriptions
